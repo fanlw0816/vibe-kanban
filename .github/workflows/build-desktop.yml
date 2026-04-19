@@ -240,7 +240,7 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           name: "Desktop Build ${{ steps.version.outputs.tag }}"
           files: |
-            release-artifacts/tauri-windows-x86_64/*.msi
-            release-artifacts/tauri-windows-x86_64/*.exe
+            release-artifacts/*.msi
+            release-artifacts/*-setup.exe
           draft: false
           prerelease: true
