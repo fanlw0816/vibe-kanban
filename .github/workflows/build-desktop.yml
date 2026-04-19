@@ -175,6 +175,13 @@ jobs:
           name: frontend-dist
           path: packages/local-web/dist/
 
+      - name: Touch server source to force re-embed frontend
+        run: |
+          # Force recompilation of server crate to embed frontend files
+          # rust_embed embeds files at compile time, so cached artifacts
+          # may have empty frontend if previous build had no dist/
+          touch crates/server/src/routes/frontend.rs
+
       - name: Patch tauri.conf.json for CI
         run: |
           node -e "
