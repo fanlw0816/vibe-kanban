@@ -1,0 +1,241 @@
+name: Build Desktop (Windows)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag (e.g. v0.1.44)"
+        required: false
+        default: ""
+
+env:
+  NODE_VERSION: 22
+  PNPM_VERSION: 10.13.1
+  RUST_TOOLCHAIN: nightly-2025-12-04
+
+permissions:
+  contents: write
+
+jobs:
+  build-frontend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Get pnpm store directory
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build frontend
+        run: cd packages/local-web && npm run build
+
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: frontend-dist
+          path: packages/local-web/dist/
+          retention-days: 1
+
+  build-tauri-windows:
+    needs: build-frontend
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            platform: windows-x86_64
+    env:
+      CARGO_INCREMENTAL: "0"
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+      SCCACHE_CACHE_SIZE: "10G"
+      CARGO_HOME: ${{ github.workspace }}/.cargo
+      RUSTUP_HOME: ${{ github.workspace }}/.rustup
+      XWIN_CACHE_DIR: ${{ github.workspace }}/.xwin-cache
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup sccache
+        uses: BloopAI/sccache-action@main
+
+      - name: Cache Rust toolchain
+        uses: actions/cache@v5
+        with:
+          path: .rustup/toolchains
+          key: rust-toolchain-${{ runner.os }}-${{ matrix.target }}-${{ env.RUST_TOOLCHAIN }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            .cargo/registry/cache
+            .cargo/registry/index
+            .cargo/git/db
+            .cargo/bin
+          key: cargo-tauri-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache target
+        uses: actions/cache@v5
+        with:
+          path: target
+          key: tauri-target-${{ runner.os }}-${{ matrix.target }}-${{ github.sha }}
+          restore-keys: |
+            tauri-target-${{ runner.os }}-${{ matrix.target }}-
+
+      - name: Install Windows cross-compilation dependencies
+        run: |
+          sudo apt-get update
+          DEBIAN_FRONTEND=noninteractive sudo apt-get install -y \
+            clang libclang-dev lld llvm nasm cmake ninja-build nsis \
+            clang-19 clang-tools-19 llvm-19 lld-19 \
+            meson valac bison gobject-introspection libgirepository1.0-dev \
+            libglib2.0-dev libgsf-1-dev libgcab-dev libmsi-dev
+          echo "/usr/lib/llvm-19/bin" >> $GITHUB_PATH
+
+      - name: Build and install wixl
+        env:
+          RUSTC_WRAPPER: ""
+        run: |
+          cd /tmp
+          curl -sL https://download.gnome.org/sources/msitools/0.103/msitools-0.103.tar.xz -o msitools-0.103.tar.xz
+          echo "d17622eebbf37fa4c09b59be0bc8db08b26be300a6731c74da1ebce262bce839  msitools-0.103.tar.xz" | sha256sum -c -
+          tar xJf msitools-0.103.tar.xz
+          cd msitools-0.103
+          meson setup builddir --prefix=/usr
+          meson compile -C builddir wixl
+          sudo install -m755 builddir/tools/wixl/wixl /usr/local/bin/wixl
+          sudo install -m644 builddir/libmsi/libmsi-1.0.so.0.0.0 /usr/local/lib/
+          sudo ln -sf libmsi-1.0.so.0.0.0 /usr/local/lib/libmsi-1.0.so.0
+          sudo ln -sf libmsi-1.0.so.0 /usr/local/lib/libmsi-1.0.so
+          sudo ldconfig
+          sudo mkdir -p /usr/share/wixl-0.103/ext
+          sudo cp -r data/ext/ui /usr/share/wixl-0.103/ext/
+          cd / && rm -rf /tmp/msitools-0.103
+          wixl --version
+
+      - name: Install cargo-xwin
+        uses: taiki-e/cache-cargo-install-action@34ce5120836e5f9f1508d8713d7fdea0e8facd6f
+        with:
+          tool: cargo-xwin
+          git: https://github.com/rust-cross/cargo-xwin
+          rev: 635a9559d49d719e79e0f60d92eb44447faf3212
+
+      - name: Cache xwin downloads
+        uses: actions/cache@v5
+        with:
+          path: ${{ github.workspace }}/.xwin-cache
+          key: xwin-${{ runner.os }}-${{ matrix.target }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Install Tauri CLI
+        uses: taiki-e/cache-cargo-install-action@34ce5120836e5f9f1508d8713d7fdea0e8facd6f
+        with:
+          tool: tauri-cli@2
+
+      - name: Download frontend artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: frontend-dist
+          path: packages/local-web/dist/
+
+      - name: Patch tauri.conf.json for CI
+        run: |
+          node -e "
+            const fs = require('fs');
+            const conf = JSON.parse(fs.readFileSync('crates/tauri-app/tauri.conf.json', 'utf8'));
+            const endpoint = 'https://github.com/${{ github.repository }}/releases/latest/download/latest.json';
+            conf.plugins.updater.endpoints = conf.plugins.updater.endpoints.map(e =>
+              e === '__TAURI_UPDATE_ENDPOINT__' ? endpoint : e
+            );
+            fs.writeFileSync('crates/tauri-app/tauri.conf.json', JSON.stringify(conf, null, 2) + '\n');
+          "
+
+      - name: Build Tauri app
+        run: cargo tauri build --runner cargo-xwin --target ${{ matrix.target }} --ci
+
+      - name: Build MSI with wixl
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          node scripts/build-tauri-msi.js --target ${{ matrix.target }} --version $VERSION
+
+      - name: Collect installers
+        run: |
+          mkdir -p tauri-artifacts
+          find target/${{ matrix.target }}/release/bundle \
+            \( -name "*.msi" -o -name "*-setup.exe" \) -exec cp {} tauri-artifacts/ \;
+          ls -la tauri-artifacts/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: tauri-windows-x86_64
+          path: tauri-artifacts/
+          retention-days: 30
+
+  create-release:
+    needs: build-tauri-windows
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: release-artifacts/
+          pattern: tauri-*
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "tag=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=v$(node -p "require('./package.json').version")-dev-$(date +%Y%m%d%H%M)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "Desktop Build ${{ steps.version.outputs.tag }}"
+          files: |
+            release-artifacts/tauri-windows-x86_64/**
+          draft: false
+          prerelease: true
