@@ -71,6 +71,216 @@ pub trait AuthorizationProvider: Send + Sync {
     ) -> Result<Option<ProviderTokenDetails>, TokenValidationError>;
 }
 
+pub(crate) struct GitLabOAuthProvider {
+    client: Client,
+    client_id: String,
+    client_secret: SecretString,
+    host: String,
+}
+
+impl GitLabOAuthProvider {
+    pub(crate) fn new(client_id: String, client_secret: SecretString) -> Result<Self> {
+        let host = std::env::var("GITLAB_HOST")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "https://gitlab.com".to_string());
+        let client = Client::builder().user_agent(USER_AGENT).build()?;
+        Ok(Self {
+            client,
+            client_id,
+            client_secret,
+            host,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum GitLabTokenResponse {
+    Success {
+        access_token: String,
+        token_type: String,
+        scope: Option<String>,
+        expires_in: Option<i64>,
+        refresh_token: Option<String>,
+    },
+    Error {
+        error: String,
+        error_description: Option<String>,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+struct GitLabUser {
+    id: i64,
+    username: String,
+    email: Option<String>,
+    name: Option<String>,
+    avatar_url: Option<String>,
+}
+
+#[async_trait]
+impl AuthorizationProvider for GitLabOAuthProvider {
+    fn name(&self) -> &'static str {
+        "gitlab"
+    }
+
+    fn scopes(&self) -> &[&str] {
+        &["read_user", "email"]
+    }
+
+    fn authorize_url(&self, state: &str, redirect_uri: &str) -> Result<Url> {
+        let mut url = Url::parse(&format!("{}/oauth/authorize", self.host))?;
+        {
+            let mut qp = url.query_pairs_mut();
+            qp.append_pair("client_id", &self.client_id);
+            qp.append_pair("state", state);
+            qp.append_pair("redirect_uri", redirect_uri);
+            qp.append_pair("response_type", "code");
+            qp.append_pair("scope", &self.scopes().join(" "));
+        }
+        Ok(url)
+    }
+
+    async fn exchange_code(&self, code: &str, redirect_uri: &str) -> Result<AuthorizationGrant> {
+        let response = self
+            .client
+            .post(format!("{}/oauth/token", self.host))
+            .form(&[
+                ("client_id", self.client_id.as_str()),
+                ("client_secret", self.client_secret.expose_secret()),
+                ("code", code),
+                ("grant_type", "authorization_code"),
+                ("redirect_uri", redirect_uri),
+            ])
+            .send()
+            .await?
+            .error_for_status()?;
+
+        match response.json::<GitLabTokenResponse>().await? {
+            GitLabTokenResponse::Success {
+                access_token,
+                token_type,
+                scope,
+                expires_in,
+                refresh_token,
+            } => {
+                let scopes = scope
+                    .unwrap_or_default()
+                    .split_whitespace()
+                    .filter_map(|value| {
+                        let trimmed = value.trim();
+                        (!trimmed.is_empty()).then_some(trimmed.to_string())
+                    })
+                    .collect();
+
+                Ok(AuthorizationGrant {
+                    access_token: SecretString::new(access_token.into()),
+                    token_type,
+                    scopes,
+                    refresh_token: refresh_token.map(|v| SecretString::new(v.into())),
+                    expires_in: expires_in.map(Duration::seconds),
+                    id_token: None,
+                })
+            }
+            GitLabTokenResponse::Error {
+                error,
+                error_description,
+            } => {
+                let detail = error_description.unwrap_or_else(|| error.clone());
+                anyhow::bail!("gitlab token exchange failed: {detail}")
+            }
+        }
+    }
+
+    async fn fetch_user(&self, access_token: &SecretString) -> Result<ProviderUser> {
+        let bearer = format!("Bearer {}", access_token.expose_secret());
+
+        let user: GitLabUser = self
+            .client
+            .get(format!("{}/api/v4/user", self.host))
+            .header("Authorization", &bearer)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+
+        Ok(ProviderUser {
+            id: user.id.to_string(),
+            login: Some(user.username),
+            email: user.email,
+            name: user.name,
+            avatar_url: user.avatar_url,
+        })
+    }
+
+    async fn validate_token(
+        &self,
+        token_details: &ProviderTokenDetails,
+        max_retries: u32,
+    ) -> Result<Option<ProviderTokenDetails>, TokenValidationError> {
+        let mut attempt = 0;
+        let access_token = SecretString::new(token_details.access_token.clone().into_boxed_str());
+
+        loop {
+            attempt += 1;
+
+            let response = match self
+                .client
+                .get(format!("{}/api/v4/user", self.host))
+                .header(
+                    "Authorization",
+                    format!("Bearer {}", access_token.expose_secret()),
+                )
+                .send()
+                .await
+            {
+                Ok(resp) => resp,
+                Err(err) => {
+                    if attempt >= max_retries {
+                        return Err(TokenValidationError::temporary(format!(
+                            "request failed: {err}"
+                        )));
+                    }
+                    tokio::time::sleep(tokio::time::Duration::from_secs(RETRY_INTERVAL_SECONDS))
+                        .await;
+                    continue;
+                }
+            };
+
+            match response.status() {
+                reqwest::StatusCode::OK => {
+                    return Ok(None);
+                }
+                reqwest::StatusCode::UNAUTHORIZED => {
+                    return Err(TokenValidationError::InvalidOrRevoked);
+                }
+                status if status.is_server_error() => {
+                    if attempt >= max_retries {
+                        return Err(TokenValidationError::temporary(format!(
+                            "gitlab validation server error: {status}"
+                        )));
+                    }
+                    tokio::time::sleep(tokio::time::Duration::from_secs(RETRY_INTERVAL_SECONDS))
+                        .await;
+                    continue;
+                }
+                status => {
+                    if attempt >= max_retries {
+                        return Err(TokenValidationError::temporary(format!(
+                            "unexpected validation status: {status}"
+                        )));
+                    }
+                    tokio::time::sleep(tokio::time::Duration::from_secs(RETRY_INTERVAL_SECONDS))
+                        .await;
+                    continue;
+                }
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct ProviderRegistry {
     providers: HashMap<String, Arc<dyn AuthorizationProvider>>,

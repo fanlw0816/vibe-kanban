@@ -61,6 +61,7 @@ type SignInCompletionMethod =
   | 'auth_dialog'
   | 'local_auth'
   | 'oauth_github'
+  | 'oauth_gitlab'
   | 'oauth_google';
 function resolveTheme(theme: ThemeMode): 'light' | 'dark' {
   if (theme === ThemeMode.SYSTEM) {
@@ -226,7 +227,12 @@ export function OnboardingSignInPage() {
 
     if (didSignIn) {
       await finishOnboarding({
-        method: provider === 'github' ? 'oauth_github' : 'oauth_google',
+        method:
+          provider === 'github'
+            ? 'oauth_github'
+            : provider === 'gitlab'
+              ? 'oauth_gitlab'
+              : 'oauth_google',
       });
     }
   };
@@ -339,6 +345,15 @@ export function OnboardingSignInPage() {
                         disabled={saving || pendingProvider !== null}
                         loading={pendingProvider === 'github'}
                         loadingText="Opening GitHub..."
+                      />
+                    )}
+                    {hasOAuthProviders && oauthProviders.includes('gitlab') && (
+                      <OAuthSignInButton
+                        provider="gitlab"
+                        onClick={() => void handleProviderSignIn('gitlab')}
+                        disabled={saving || pendingProvider !== null}
+                        loading={pendingProvider === 'gitlab'}
+                        loadingText="Opening GitLab..."
                       />
                     )}
                     {hasOAuthProviders && oauthProviders.includes('google') && (

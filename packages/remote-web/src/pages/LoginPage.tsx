@@ -164,6 +164,17 @@ export default function LoginPage() {
                 )}
               {!isAuthMethodsError &&
                 hasOAuthProviders &&
+                oauthProviders.includes("gitlab") && (
+                  <OAuthButton
+                    provider="gitlab"
+                    label="Continue with GitLab"
+                    onClick={() => void handleLogin("gitlab")}
+                    disabled={pending !== null}
+                    loading={pending === "gitlab"}
+                  />
+                )}
+              {!isAuthMethodsError &&
+                hasOAuthProviders &&
                 oauthProviders.includes("google") && (
                   <OAuthButton
                     provider="google"
@@ -215,7 +226,7 @@ function OAuthButton({
       disabled={disabled || loading}
     >
       {loading
-        ? `Opening ${provider === "github" ? "GitHub" : "Google"}...`
+        ? `Opening ${provider === "github" ? "GitHub" : provider === "gitlab" ? "GitLab" : "Google"}...`
         : label}
     </button>
   );

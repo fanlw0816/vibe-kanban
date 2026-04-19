@@ -23,7 +23,7 @@ import { oauthApi, type AuthMethodsResponse } from '@/shared/lib/api';
 import { useTranslation } from 'react-i18next';
 import { defineModal } from '@/shared/lib/modals';
 
-export type OAuthProvider = 'github' | 'google';
+export type OAuthProvider = 'github' | 'gitlab' | 'google';
 type OAuthDialogProps = { initialProvider?: OAuthProvider };
 
 type OAuthState =
@@ -317,6 +317,16 @@ const OAuthDialogImpl = create<OAuthDialogProps>(({ initialProvider }) => {
                     provider="github"
                     className="w-full"
                     onClick={() => handleProviderSelect('github')}
+                    disabled={isSubmittingLocal}
+                  />
+                )}
+              {!isAuthMethodsError &&
+                hasOAuthProviders &&
+                oauthProviders.includes('gitlab') && (
+                  <OAuthSignInButton
+                    provider="gitlab"
+                    className="w-full"
+                    onClick={() => handleProviderSelect('gitlab')}
                     disabled={isSubmittingLocal}
                   />
                 )}

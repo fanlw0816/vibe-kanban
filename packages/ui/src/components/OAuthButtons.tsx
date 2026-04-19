@@ -2,9 +2,10 @@ import { cn } from '../lib/cn';
 import { SpinnerIcon } from '@phosphor-icons/react';
 import { GitHubDark } from 'developer-icons';
 import { useTranslation } from 'react-i18next';
+import { GitLabLogo } from './GitLabLogo';
 import { GoogleLogo } from './GoogleLogo';
 
-export type OAuthProvider = 'github' | 'google';
+export type OAuthProvider = 'github' | 'gitlab' | 'google';
 
 interface OAuthSignInButtonProps {
   provider: OAuthProvider;
@@ -19,6 +20,10 @@ const providerConfig = {
   github: {
     i18nKey: 'oauth.continueWithGitHub' as const,
     icon: () => <GitHubDark className="size-5" />,
+  },
+  gitlab: {
+    i18nKey: 'oauth.continueWithGitLab' as const,
+    icon: () => <GitLabLogo className="size-5" />,
   },
   google: {
     i18nKey: 'oauth.continueWithGoogle' as const,

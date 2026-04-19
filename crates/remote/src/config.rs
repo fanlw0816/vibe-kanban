@@ -370,6 +370,7 @@ impl LocalAuthConfig {
 pub struct AuthConfig {
     github: Option<OAuthProviderConfig>,
     google: Option<OAuthProviderConfig>,
+    gitlab: Option<OAuthProviderConfig>,
     local: Option<LocalAuthConfig>,
     jwt_secret: SecretString,
     public_base_url: String,
@@ -406,9 +407,21 @@ impl AuthConfig {
             _ => None,
         };
 
+        let gitlab = match env::var("GITLAB_OAUTH_CLIENT_ID") {
+            Ok(client_id) if !client_id.is_empty() => {
+                let client_secret = env::var("GITLAB_OAUTH_CLIENT_SECRET")
+                    .map_err(|_| ConfigError::MissingVar("GITLAB_OAUTH_CLIENT_SECRET"))?;
+                Some(OAuthProviderConfig::new(
+                    client_id,
+                    SecretString::new(client_secret.into()),
+                ))
+            }
+            _ => None,
+        };
+
         let local = LocalAuthConfig::from_env()?;
 
-        if github.is_none() && google.is_none() && local.is_none() {
+        if github.is_none() && google.is_none() && gitlab.is_none() && local.is_none() {
             return Err(ConfigError::NoOAuthProviders);
         }
 
@@ -418,6 +431,7 @@ impl AuthConfig {
         Ok(Self {
             github,
             google,
+            gitlab,
             local,
             jwt_secret,
             public_base_url,
@@ -430,6 +444,10 @@ impl AuthConfig {
 
     pub fn google(&self) -> Option<&OAuthProviderConfig> {
         self.google.as_ref()
+    }
+
+    pub fn gitlab(&self) -> Option<&OAuthProviderConfig> {
+        self.gitlab.as_ref()
     }
 
     pub fn local(&self) -> Option<&LocalAuthConfig> {

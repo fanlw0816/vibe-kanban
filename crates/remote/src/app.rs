@@ -9,8 +9,8 @@ use crate::{
     analytics::{AnalyticsConfig, AnalyticsService},
     attachments::cleanup::spawn_cleanup_task,
     auth::{
-        GitHubOAuthProvider, GoogleOAuthProvider, JwtService, OAuthHandoffService,
-        OAuthTokenValidator, ProviderRegistry,
+        GitLabOAuthProvider, GitHubOAuthProvider, GoogleOAuthProvider, JwtService,
+        OAuthHandoffService, OAuthTokenValidator, ProviderRegistry,
     },
     azure_blob::AzureBlobService,
     billing::BillingService,
@@ -70,6 +70,13 @@ impl Server {
             registry.register(GoogleOAuthProvider::new(
                 google.client_id().to_string(),
                 google.client_secret().clone(),
+            )?);
+        }
+
+        if let Some(gitlab) = auth_config.gitlab() {
+            registry.register(GitLabOAuthProvider::new(
+                gitlab.client_id().to_string(),
+                gitlab.client_secret().clone(),
             )?);
         }
 
