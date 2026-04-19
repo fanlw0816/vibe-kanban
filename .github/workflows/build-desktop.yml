@@ -220,6 +220,11 @@ jobs:
           path: release-artifacts/
           pattern: tauri-*
 
+      - name: List downloaded artifacts
+        run: |
+          echo "Downloaded artifacts structure:"
+          find release-artifacts/ -type f
+
       - name: Determine version
         id: version
         run: |
@@ -235,6 +240,7 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           name: "Desktop Build ${{ steps.version.outputs.tag }}"
           files: |
-            release-artifacts/tauri-windows-x86_64/**
+            release-artifacts/tauri-windows-x86_64/*.msi
+            release-artifacts/tauri-windows-x86_64/*.exe
           draft: false
           prerelease: true
