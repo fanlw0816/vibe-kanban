@@ -195,45 +195,29 @@ fn main() {
                 let menu = MenuBuilder::new(app).items(&[&show_item, &quit_item]).build()?;
 
                 let icon = app.default_window_icon().cloned().unwrap_or_else(|| {
-                    tracing::warn!("No default window icon found, tray will use default");
-                    // Fallback: create a simple icon or use app icon from resources
+                    tracing::warn!("No default window icon found, tray will use embedded icon");
+                    // Fallback: use embedded app icon
                     tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))
-                        .expect("Failed to load fallback tray icon")
+                        .expect("Embedded icon should always be valid at compile time")
                 });
 
-                let _tray = TrayIconBuilder::new()
+                TrayIconBuilder::new()
                     .icon(icon)
                     .menu(&menu)
-                    .menu_on_left_click(true)
+                    .menu_on_left_click(false) // Left-click shows window, right-click shows menu
                     .on_menu_event(|app, event| match event.id.as_ref() {
-                        "show" => {
-                            if let Some(window) = app.get_webview_window("main") {
-                                if let Err(e) = window.show() {
-                                    tracing::error!("Failed to show window: {e}");
-                                }
-                                if let Err(e) = window.set_focus() {
-                                    tracing::error!("Failed to focus window: {e}");
-                                }
-                            }
-                        }
-                        "quit" => {
-                            app.exit(0);
-                        }
+                        "show" => show_main_window(app),
+                        "quit" => app.exit(0),
                         _ => {}
                     })
                     .on_tray_icon_event(|tray, event| {
-                        // Double-click or click to show window
-                        if let TrayIconEvent::Click { .. } | TrayIconEvent::DoubleClick { .. } = event
-                        {
-                            let app = tray.app_handle();
-                            if let Some(window) = app.get_webview_window("main") {
-                                if let Err(e) = window.show() {
-                                    tracing::error!("Failed to show window: {e}");
-                                }
-                                if let Err(e) = window.set_focus() {
-                                    tracing::error!("Failed to focus window: {e}");
-                                }
+                        // Left-click or double-click shows window (right-click shows menu via menu_on_left_click)
+                        match event {
+                            TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, .. }
+                            | TrayIconEvent::DoubleClick { button: tauri::tray::MouseButton::Left, .. } => {
+                                show_main_window(tray.app_handle());
                             }
+                            _ => {}
                         }
                     })
                     .build(app)?;
@@ -435,9 +419,18 @@ fn optimize_webview_performance(window: &tauri::WebviewWindow) {
 
 #[cfg(target_os = "macos")]
 fn show_window(app: &tauri::AppHandle) {
+    show_main_window(app);
+}
+
+/// Show and focus the main window. Used by dock icon (macOS) and tray (Windows/Linux).
+fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
+        if let Err(e) = window.show() {
+            tracing::error!("Failed to show window: {e}");
+        }
+        if let Err(e) = window.set_focus() {
+            tracing::error!("Failed to focus window: {e}");
+        }
     }
 }
 
