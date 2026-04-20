@@ -194,38 +194,49 @@ fn main() {
                 let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
                 let menu = MenuBuilder::new(app).items(&[&show_item, &quit_item]).build()?;
 
+                let icon = app.default_window_icon().cloned().unwrap_or_else(|| {
+                    tracing::warn!("No default window icon found, tray will use default");
+                    // Fallback: create a simple icon or use app icon from resources
+                    tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))
+                        .expect("Failed to load fallback tray icon")
+                });
+
                 let _tray = TrayIconBuilder::new()
-                    .icon(app.default_window_icon().unwrap().clone())
+                    .icon(icon)
                     .menu(&menu)
                     .menu_on_left_click(true)
-                    .on_menu_event(|app, event| {
-                        match event.id.as_ref() {
-                            "show" => {
-                                if let Some(window) = app.get_webview_window("main") {
-                                    let _ = window.show();
-                                    let _ = window.set_focus();
+                    .on_menu_event(|app, event| match event.id.as_ref() {
+                        "show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                if let Err(e) = window.show() {
+                                    tracing::error!("Failed to show window: {e}");
+                                }
+                                if let Err(e) = window.set_focus() {
+                                    tracing::error!("Failed to focus window: {e}");
                                 }
                             }
-                            "quit" => {
-                                app.exit(0);
-                            }
-                            _ => {}
                         }
+                        "quit" => {
+                            app.exit(0);
+                        }
+                        _ => {}
                     })
                     .on_tray_icon_event(|tray, event| {
-                        // Double-click to show window
-                        if let TrayIconEvent::DoubleClick { .. } = event {
+                        // Double-click or click to show window
+                        if let TrayIconEvent::Click { .. } | TrayIconEvent::DoubleClick { .. } = event
+                        {
                             let app = tray.app_handle();
                             if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
+                                if let Err(e) = window.show() {
+                                    tracing::error!("Failed to show window: {e}");
+                                }
+                                if let Err(e) = window.set_focus() {
+                                    tracing::error!("Failed to focus window: {e}");
+                                }
                             }
                         }
                     })
                     .build(app)?;
-
-                // Keep tray alive for the app's lifetime (Tauri 2 manages it internally)
-                let _ = _tray;
             }
 
             if cfg!(debug_assertions) {
