@@ -8,9 +8,11 @@ use services::services::{
     config::load_config_from_file,
     notification::{NotificationService, PushNotifier, set_global_push_notifier},
 };
-#[cfg(target_os = "macos")]
-use tauri::Manager;
-use tauri::{Emitter, Listener};
+use tauri::{
+    menu::{Menu, MenuBuilder, MenuItem, MenuItemBuilder},
+    tray::{TrayIconBuilder, TrayIconEvent},
+    Emitter, Listener, Manager,
+};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
@@ -185,6 +187,47 @@ fn main() {
             #[cfg(target_os = "linux")]
             linux_notifications::initialize(app.handle().clone());
 
+            // Create system tray for Windows/Linux (macOS uses dock icon).
+            #[cfg(not(target_os = "macos"))]
+            {
+                let show_item = MenuItemBuilder::with_id("show", "Show Window").build(app)?;
+                let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+                let menu = MenuBuilder::new(app).items(&[&show_item, &quit_item]).build()?;
+
+                let _tray = TrayIconBuilder::new()
+                    .icon(app.default_window_icon().unwrap().clone())
+                    .menu(&menu)
+                    .menu_on_left_click(true)
+                    .on_menu_event(|app, event| {
+                        match event.id.as_ref() {
+                            "show" => {
+                                if let Some(window) = app.get_webview_window("main") {
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                }
+                            }
+                            "quit" => {
+                                app.exit(0);
+                            }
+                            _ => {}
+                        }
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        // Double-click to show window
+                        if let TrayIconEvent::DoubleClick { .. } = event {
+                            let app = tray.app_handle();
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                    })
+                    .build(app)?;
+
+                // Keep tray alive for the app's lifetime (Tauri 2 manages it internally)
+                let _ = _tray;
+            }
+
             if cfg!(debug_assertions) {
                 // Dev mode: frontend dev server (Vite) and backend are started
                 // externally. Use WebviewUrl::External so that macOS WKWebView
@@ -293,12 +336,13 @@ fn main() {
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     // Hide the window instead of closing it so the app keeps
                     // running in the background (agents/processes stay alive).
-                    // The dock icon stays visible so users can click it to reopen.
+                    // macOS: dock icon stays visible, users can click it to reopen.
+                    // Windows/Linux: system tray allows reopening or quitting.
                     api.prevent_close();
                     let _ = window.hide();
                 }
                 tauri::WindowEvent::Destroyed => {
-                    // Only fires on actual app exit (e.g. Cmd+Q).
+                    // Only fires on actual app exit (e.g. Cmd+Q or tray Quit).
                     shutdown_token_for_event.cancel();
                 }
                 _ => {}
