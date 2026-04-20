@@ -9,7 +9,7 @@ use services::services::{
     notification::{NotificationService, PushNotifier, set_global_push_notifier},
 };
 use tauri::{
-    menu::{Menu, MenuBuilder, MenuItem, MenuItemBuilder},
+    menu::{MenuBuilder, MenuItemBuilder},
     tray::{TrayIconBuilder, TrayIconEvent},
     Emitter, Listener, Manager,
 };
