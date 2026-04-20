@@ -200,7 +200,7 @@ fn main() {
                 TrayIconBuilder::new()
                     .icon(icon)
                     .menu(&menu)
-                    .menu_on_left_click(false) // Left-click shows window, right-click shows menu
+                    .show_menu_on_left_click(false) // Left-click shows window, right-click shows menu
                     .on_menu_event(|app, event| match event.id.as_ref() {
                         "show" => show_main_window(app),
                         "quit" => app.exit(0),

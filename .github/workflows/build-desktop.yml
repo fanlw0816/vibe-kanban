@@ -114,7 +114,8 @@ jobs:
             clang libclang-dev lld llvm nasm cmake ninja-build nsis \
             clang-19 clang-tools-19 llvm-19 lld-19 \
             meson valac bison gobject-introspection libgirepository1.0-dev \
-            libglib2.0-dev libgsf-1-dev libgcab-dev libmsi-dev
+            libglib2.0-dev libgsf-1-dev libgcab-dev libmsi-dev \
+            libayatana-appindicator3-dev
           echo "/usr/lib/llvm-19/bin" >> $GITHUB_PATH
 
       - name: Build and install wixl
