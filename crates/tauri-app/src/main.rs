@@ -194,12 +194,8 @@ fn main() {
                 let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
                 let menu = MenuBuilder::new(app).items(&[&show_item, &quit_item]).build()?;
 
-                let icon = app.default_window_icon().cloned().unwrap_or_else(|| {
-                    tracing::warn!("No default window icon found, tray will use embedded icon");
-                    // Fallback: use embedded app icon
-                    tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))
-                        .expect("Embedded icon should always be valid at compile time")
-                });
+                // Use the app icon defined in tauri.conf.json
+                let icon = app.default_window_icon().expect("App icon should be configured in tauri.conf.json").clone();
 
                 TrayIconBuilder::new()
                     .icon(icon)
@@ -210,7 +206,7 @@ fn main() {
                         "quit" => app.exit(0),
                         _ => {}
                     })
-                    .on_tray_icon_event(|tray, event| {
+                    .on_tray_icon_event(|tray: &tauri::tray::TrayIcon, event| {
                         // Left-click or double-click shows window (right-click shows menu via menu_on_left_click)
                         match event {
                             TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, .. }
