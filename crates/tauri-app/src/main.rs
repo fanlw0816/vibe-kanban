@@ -156,10 +156,22 @@ fn main() {
         builder = builder.plugin(tauri_plugin_macos_fps::init());
     }
 
-    // Only register the updater plugin in release builds — dev builds have a
-    // placeholder endpoint that fails config deserialization.
+    // Only register the updater plugin when updater config is present.
+    // CI builds may delete plugins.updater to disable signing, in which case
+    // registering the plugin would fail silently at runtime (no window opens).
     if !cfg!(debug_assertions) {
-        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+        // Check if updater is configured by reading tauri.conf.json
+        let has_updater_config = std::env::var("VK_TAURI_UPDATER_ENABLED")
+            .is_ok()
+            || {
+                let conf_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tauri.conf.json");
+                std::fs::read_to_string(conf_path)
+                    .map(|s| s.contains("\"updater\""))
+                    .unwrap_or(false)
+            };
+        if has_updater_config {
+            builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+        }
     }
 
     builder
